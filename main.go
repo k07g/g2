@@ -1,36 +1,30 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"log"
+	"net/http"
+	"os"
 
-	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/k07g/g2/handler"
+	"github.com/k07g/g2/infrastructure/inmemory"
+	"github.com/k07g/g2/usecase"
 )
 
-type Request struct {
-	Name string `json:"name"`
-}
-
-type Response struct {
-	Message    string `json:"message"`
-	StatusCode int    `json:"statusCode"`
-}
-
-func handler(ctx context.Context, req Request) (Response, error) {
-	log.Printf("Received request: %+v", req)
-
-	name := req.Name
-	if name == "" {
-		name = "World"
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
 
-	return Response{
-		Message:    fmt.Sprintf("Hello, %s!", name),
-		StatusCode: 200,
-	}, nil
-}
+	repo := inmemory.NewTaskRepository()
+	uc := usecase.NewTaskUseCase(repo)
 
-func main() {
-	lambda.Start(handler)
+	mux := http.NewServeMux()
+	h := handler.NewTaskHandler(uc)
+	h.Register(mux)
+
+	log.Printf("server starting on :%s", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatalf("server error: %v", err)
+	}
 }

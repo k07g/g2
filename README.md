@@ -1,85 +1,105 @@
 # g2
 
-Go で書いた AWS Lambda コンテナデプロイのサンプルです。
+Go + クリーンアーキテクチャで実装したタスク管理 Web API です。ECS (Docker コンテナ) へのデプロイを想定しています。
 
-## 構成
+## アーキテクチャ
 
 ```
 g2/
-├── main.go       # Lambda ハンドラ
-├── Dockerfile    # Lambda コンテナイメージ (golang:1.26.1-alpine → provided:al2023)
-├── deploy.sh     # ECR + Lambda デプロイスクリプト
-├── Makefile      # ビルド/テスト/デプロイコマンド
-├── go.mod
-└── go.sum
+├── domain/                 # エンティティ・リポジトリインターフェース
+│   └── task.go
+├── usecase/                # ビジネスロジック
+│   └── task_usecase.go
+├── handler/                # HTTP ハンドラ（インターフェースアダプタ層）
+│   └── task_handler.go
+├── infrastructure/
+│   └── inmemory/           # インメモリ リポジトリ実装
+│       └── task_repository.go
+├── main.go
+├── Dockerfile
+└── Makefile
+```
+
+依存の方向は常に内側（domain）へのみ向きます。
+
+```
+handler → usecase → domain ← infrastructure
 ```
 
 ## API
 
-**リクエスト**
+| メソッド | パス | 説明 |
+|--------|------|------|
+| GET | `/tasks` | タスク一覧取得 |
+| POST | `/tasks` | タスク作成 |
+| GET | `/tasks/{id}` | タスク取得 |
+| PUT | `/tasks/{id}` | タスク更新 |
+| DELETE | `/tasks/{id}` | タスク削除 |
+
+### タスクのステータス
+
+| 値 | 意味 |
+|----|------|
+| `todo` | 未着手（デフォルト） |
+| `in_progress` | 進行中 |
+| `done` | 完了 |
+
+### リクエスト/レスポンス例
+
+**タスク作成**
+```bash
+curl -XPOST http://localhost:8080/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title": "買い物", "description": "牛乳を買う"}'
+```
 ```json
-{ "name": "Lambda" }
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "買い物",
+  "description": "牛乳を買う",
+  "status": "todo",
+  "created_at": "2026-03-20T10:00:00Z",
+  "updated_at": "2026-03-20T10:00:00Z"
+}
 ```
 
-**レスポンス**
-```json
-{ "message": "Hello, Lambda!", "statusCode": 200 }
+**タスク更新**
+```bash
+curl -XPUT http://localhost:8080/tasks/{id} \
+  -H "Content-Type: application/json" \
+  -d '{"title": "買い物", "description": "牛乳を買う", "status": "done"}'
 ```
-
-`name` を省略すると `"Hello, World!"` が返ります。
 
 ## ローカル動作確認
 
 Docker が起動している状態で実行します。
 
 ```bash
-# コンテナをビルドして Lambda Runtime Interface Emulator (RIE) で起動
 make run
 ```
 
-別ターミナルで呼び出し:
+別ターミナルでリクエスト:
 
 ```bash
-make invoke
-# => { "message": "Hello, Lambda!", "statusCode": 200 }
+# タスク一覧
+curl http://localhost:8080/tasks
+
+# タスク作成
+curl -XPOST http://localhost:8080/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title": "タスク1"}'
 ```
 
-## AWS へのデプロイ
+## コマンド
 
-### 前提条件
+| コマンド | 説明 |
+|---------|------|
+| `make build` | バイナリをビルド (`./server`) |
+| `make test` | テストを実行 |
+| `make run` | Docker でローカル起動 (`:8080`) |
 
-- AWS CLI が設定済み (`aws configure`)
-- Docker が起動中
-- Lambda 実行用 IAM ロール (`AWSLambdaBasicExecutionRole` 以上)
+## 環境変数
 
-### デプロイ手順
-
-```bash
-export AWS_ACCOUNT_ID=123456789012
-export LAMBDA_ROLE_ARN=arn:aws:iam::123456789012:role/lambda-execution-role
-
-# 任意: デフォルト値から変更する場合
-export AWS_REGION=ap-northeast-1   # デフォルト: ap-northeast-1
-export ECR_REPO=g2-lambda          # デフォルト: g2-lambda
-export LAMBDA_FUNCTION=g2          # デフォルト: g2
-
-make deploy
-```
-
-`deploy.sh` は以下を自動で行います:
-
-1. ECR へログイン
-2. ECR リポジトリを作成 (初回のみ)
-3. Docker イメージをビルド (`linux/amd64`)
-4. ECR へプッシュ
-5. Lambda 関数を更新、または新規作成
-
-### Lambda の動作確認
-
-```bash
-aws lambda invoke \
-  --function-name g2 \
-  --payload '{"name":"Lambda"}' \
-  --cli-binary-format raw-in-base64-out \
-  response.json && cat response.json
-```
+| 変数 | デフォルト | 説明 |
+|------|-----------|------|
+| `PORT` | `8080` | リッスンするポート番号 |
