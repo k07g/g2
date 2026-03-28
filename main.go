@@ -15,34 +15,33 @@ import (
 	"github.com/k07g/g2/usecase"
 )
 
-func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
+func newServer(port string) *http.Server {
 	repo := inmemory.NewTaskRepository()
 	uc := usecase.NewTaskUseCase(repo)
 
 	mux := http.NewServeMux()
-	h := handler.NewTaskHandler(uc)
-	h.Register(mux)
+	handler.NewTaskHandler(uc).Register(mux)
 
-	srv := &http.Server{
+	return &http.Server{
 		Addr:    ":" + port,
 		Handler: mux,
 	}
+}
 
+func run(srv *http.Server, quit <-chan os.Signal) error {
+	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("server starting on :%s", port)
+		log.Printf("server starting on %s", srv.Addr)
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
+			errCh <- err
 		}
 	}()
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
-	<-quit
+	select {
+	case err := <-errCh:
+		return err
+	case <-quit:
+	}
 
 	log.Println("shutting down...")
 
@@ -50,8 +49,23 @@ func main() {
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("shutdown error: %v", err)
+		return err
 	}
 
 	log.Println("server stopped")
+	return nil
+}
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
+
+	if err := run(newServer(port), quit); err != nil {
+		log.Fatalf("server error: %v", err)
+	}
 }
